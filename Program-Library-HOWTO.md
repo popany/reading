@@ -1,4 +1,4 @@
-# [Program Library HOWTO](tldp.org/HOWTO/Program-Library-HOWTO/)
+# [Program Library HOWTO](http://tldp.org/HOWTO/Program-Library-HOWTO/)
 
 ## 1. Introduction
 
