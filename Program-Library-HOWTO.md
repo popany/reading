@@ -61,3 +61,23 @@ The key to managing shared libraries is the **separation** of these names. Progr
 Thus, `/usr/lib/libreadline.so.3` is a fully-qualified **soname**, which ldconfig would set to be a symbolic link to some **realname** like `/usr/lib/libreadline.so.3.0`. There should also be a **linker name**, `/usr/lib/libreadline.so` which could be a symbolic link referring to `/usr/lib/libreadline.so.3`.
 
 #### 3.1.2. Filesystem Placement
+
+The GNU standards recommend installing by default all libraries in `/usr/local/lib` when distributing source code (and all commands should go into `/usr/local/bin`).
+
+According to the FHS, most libraries should be installed in `/usr/lib`, but libraries required for startup should be in `/lib` and libraries that are not part of the system should be in `/usr/local/lib`.
+
+The **GNU** standards recommend the default for **developers** of source code, while the **FHS** recommends the default for **distributors** (who selectively override the source code defaults, usually via the system's package management system). In practice this works nicely: the \`\`latest'' (possibly buggy!) source code that you download automatically installs itself in the \`\`local'' directory (`/usr/local`), and once that code has matured the package managers can trivially override the default to place the code in the standard place for distributions. Note that if your library calls programs that can only be called via libraries, you should place those programs in `/usr/local/libexe`c (which becomes `/usr/libexec` in a distribution). One complication is that Red Hat-derived systems don't include `/usr/local/lib` by default in their search for libraries; see the discussion below about `/etc/ld.so.conf`. Other standard library locations include `/usr/X11R6/lib` for X-windows. Note that `/lib/security` is used for PAM modules, but those are usually loaded as DL libraries (also discussed below).
+
+### 3.2. How Libraries are Used
+
+On GNU glibc-based systems, including all Linux systems, **starting up** an ELF binary executable automatically **causes** the program **loader** to be loaded and run. On Linux systems, this loader is named `/lib/ld-linux.so.X` (where X is a version number). This loader, in turn, **finds** and **loads** all other shared libraries used by the program.
+
+The list of **directories to be searched** is stored in the file `/etc/ld.so.conf`. Many Red Hat-derived distributions don't normally include `/usr/local/lib` in the file `/etc/ld.so.conf`. I consider this a bug, and adding `/usr/local/lib` to `/etc/ld.so.conf` is a common \`\`fix'' required to run many programs on Red Hat-derived systems.
+
+If you want to just **override a few functions in a library**, but keep the rest of the library, you can enter the names of overriding libraries (`.o` files) in `/etc/ld.so.preload`; these \`\`preloading'' libraries will take precedence over the standard set. This preloading file is typically used for emergency patches; a distribution usually won't include such a file when delivered.
+
+Searching all of these directories at program start-up would be grossly inefficient, so a **caching** arrangement is actually used. The program `ldconfig(8)` by default reads in the file `/etc/ld.so.conf`, sets up the appropriate **symbolic links** in the dynamic link directories (so they'll follow the standard conventions), and then writes a cache to `/etc/ld.so.cache` that's then used by other programs. This greatly speeds up access to libraries. The implication is that `ldconfig` must be run whenever a DLL is **added**, when a DLL is **removed**, or when the set of DLL **directories changes**; running `ldconfig` is often one of the steps performed by package managers when installing a library. On start-up, then, the dynamic loader actually uses the file `/etc/ld.so.cache` and then loads the libraries it needs. 
+
+### 3.3. Environment Variables
+
+#### LD_LIBRARY_PATH
