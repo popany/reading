@@ -80,4 +80,92 @@ Searching all of these directories at program start-up would be grossly ineffici
 
 ### 3.3. Environment Variables
 
-#### LD_LIBRARY_PATH
+#### 3.3.1 LD_LIBRARY_PATH
+
+You can temporarily substitute a different library for this particular execution. In Linux, the environment variable `LD_LIBRARY_PATH` is a colon-separated set of directories where libraries should be **searched for first**, before the standard set of directories; this is useful when debugging a new library or using a nonstandard library for special purposes. The environment variable `LD_PRELOAD` lists shared libraries with functions that override the standard set, just as `/etc/ld.so.preload` does. These are implemented by the loader `/lib/ld-linux.so`. I should note that, while `LD_LIBRARY_PATH` works on many Unix-like systems, it doesn't work on all; for example, this functionality is available on `HP-UX` but as the environment variable `SHLIB_PATH`, and on `AIX` this functionality is through the variable `LIBPATH` (with the same syntax, a colon-separated list).
+
+`LD_LIBRARY_PATH` is handy for development and testing, but shouldn't be modified by an installation process for normal use by normal users; see ``Why `LD_LIBRARY_PATH` is Bad'' at [http://www.visi.com/~barr/ldpath.html](http://www.visi.com/~barr/ldpath.html) for an explanation of why. But it's still useful for development or testing, and for working around problems that can't be worked around otherwise. If you don't want to set the `LD_LIBRARY_PATH` environment variable, on Linux you can even invoke the program loader directly and pass it arguments. For example, the following will use the given `PATH` instead of the content of the environment variable `LD_LIBRARY_PATH`, and run the given executable:
+
+    /lib/ld-linux.so.2 --library-path PATH EXECUTABLE
+
+Just executing `ld-linux.so` without arguments will give you more help on using this, but again, don't use this for normal use - these are all intended for debugging.
+
+#### 3.3.2 LD_DEBUG
+
+Another useful environment variable in the GNU C loader is `LD_DEBUG`. This triggers the **dl* functions** so that they give quite verbose information on what they are doing. For example:
+
+    export LD_DEBUG=files
+    command_to_run
+
+displays the processing of files and libraries when handling libraries, telling you what dependencies are detected and which SOs are loaded in what order. Setting `LD_DEBUG` to \`\`bindings'' displays information about symbol binding, setting it to \`\`libs'' displays the library search paths, and setting it to ``versions'' displays the version depdendencies.
+
+Setting `LD_DEBUG` to ``help'' and then trying to run a program will list the possible options. Again, `LD_DEBUG` isn't intended for normal use, but it can be handy when debugging and testing.
+
+#### 3.3.3. Other Environment Variables
+
+There are actually a number of other environment variables that **control the loading process**; their names begin with `LD_` or `RTLD_`. Most of the others are for low-level debugging of the loader process or for implementing specialized capabilities. Most of them aren't well-documented; if you need to know about them, the best way to learn about them is to read the source code of the `loader` (part of gcc).
+
+Permitting user control over dynamically linked libraries would be disastrous for `setuid`/`setgid` programs if special measures weren't taken. Therefore, in the `GNU loader` (which loads the rest of the program on program start-up), if the program is `setuid` or `setgid` these variables (and other similar variables) are ignored or greatly limited in what they can do. The `loader` determines if a program is `setuid` or `setgid` by checking the program's **credentials**; if the uid and euid differ, or the gid and the egid differ, the `loader` presumes the program is `setuid`/`setgid` (or descended from one) and therefore greatly limits its abilities to control linking. If you read the GNU glibc library source code, you can see this; see especially the files `elf/rtld.c` and `sysdeps/generic/dl-sysdep.c`. This means that if you cause the uid and gid to equal the euid and egid, and then call a program, these variables will have full effect. Other Unix-like systems handle the situation differently but for the same reason: a `setuid`/`setgid` program should not be unduly affected by the environment variables set. 
+
+### 3.4. Creating a Shared Library
+
+Creating a shared library is easy. First, create the object files that will go into the shared library using the `gcc -fPIC` or `-fpic` flag. The `-fPIC` and `-fpic` options enable ``**position independent code**'' generation, a requirement for shared libraries; see below for the differences. You pass the `soname` using the `-Wl` gcc option. The `-Wl` option **passes options along to the linker** (in this case the `-soname` linker option) - the commas after `-Wl` are not a typo, and you **must not include unescaped whitespace** in the option. Then create the shared library using this format:
+
+    gcc -shared -Wl,-soname,your_soname -o library_name file_list library_list
+
+Here's an example, which creates two object files (`a.o` and `b.o`) and then creates a shared library that contains both of them. Note that this compilation includes debugging information (`-g`) and will generate warnings (`-Wall`), which aren't required for shared libraries but are recommended. The compilation generates object files (using `-c`), and includes the required `-fPIC` option:
+
+    gcc -fPIC -g -c -Wall a.c
+    gcc -fPIC -g -c -Wall b.c
+    gcc -shared -Wl,-soname,libmystuff.so.1 -o libmystuff.so.1.0.1 a.o b.o -lc
+
+Here are a few points worth noting: 
+
+* Don't strip the resulting library, and don't use the compiler option `-fomit-frame-pointer` unless you really have to. The resulting library will work, but these actions make debuggers mostly useless.
+
+* Use `-fPIC` or `-fpic` to generate code. Whether to use `-fPIC` or `-fpic` to generate code is target-dependent. The `-fPIC` choice always works, but may produce larger code than `-fpic` (mnenomic to remember this is that PIC is in a larger case, so it may produce larger amounts of code). Using `-fpic` option usually generates **smaller** and **faster** code, but will have platform-dependent limitations, such as the number of globally visible symbols or the size of the code. The linker will tell you whether it fits when you create the shared library. When in doubt, I choose `-fPIC`, because it always works.
+
+* In some cases, the call to `gcc` to create the object file will also need to include the option \`\``-Wl,-export-dynamic`''. Normally, the dynamic symbol table contains only symbols which are used by a dynamic object. This option (when creating an ELF file) **adds all symbols to the dynamic symbol table** (see `ld(1)` for more information). You need to use this option when there are 'reverse dependencies', i.e., a **DL library** has unresolved symbols that by convention must be defined in the programs that intend to load these libraries. For \`\`reverse dependencies'' to work, the master program must make its symbols **dynamically available**. Note that you could say \`\``-rdynamic`'' instead of \`\``-Wl,export-dynamic`'' if you only work with Linux systems, but according to the ELF documentation the \`\``-rdynamic`'' flag doesn't always work for `gcc` on non-Linux systems.
+
+During development, there's the potential problem of modifying a library that's also used by many other programs -- and you don't want the other programs to use the \`\`developmental''library, only a particular application that you're testing against it. One link option you might use is ld's \`\`\rpath\'' option, which specifies the **runtime library search path** of that particular program being compiled. From gcc, you can invoke the **rpath option** by specifying it this way: 
+
+    -Wl,-rpath,$(DEFAULT_LIB_INSTALL_PATH)
+
+If you use this option when building the library client program, you don't need to bother with `LD_LIBRARY_PATH` (described next) other than to ensure it's not conflicting, or using other techniques to hide the library.
+
+### 3.5. Installing and Using a Shared Library
+
+Once you've created a shared library, you'll want to install it. The simple approach is simply to copy the library into one of the standard directories (e.g., `/usr/lib`) and run `ldconfig(8)`.
+
+First, you'll need to **create the shared libraries** somewhere. Then, you'll need to **set up the necessary symbolic links**, in particular a link from a **soname** to the real name (as well as from a **versionless soname**, that is, a soname that ends in ``.so'' for users who don't specify a version at all). The simplest approach is to run:
+
+    ldconfig -n directory_with_shared_libraries
+
+Finally, when you compile your programs, you'll need to tell the linker about any static and shared libraries that you're using. Use the `-l` and `-L` options for this.
+If you can't or don't want to install a library in a standard place (e.g., you don't have the right to modify `/usr/lib`), then you'll need to change your approach. In that case, you'll need to install it somewhere, and then give your program enough information so the program can find the library... and there are several ways to do that. You can use gcc's `-L` flag in simple cases. You can use the \`\`rpath'' approach (described above), particularly if you only have a specific program to use the library being placed in a \`\`non-standard'' place. You can also use environment variables to control things. In particular, you can set `LD_LIBRARY_PATH`, which is a colon-separated list of directories in which to search for shared libraries before the usual places. If you're using bash, you could invoke `my_program` this way using:
+
+    LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH  my_program
+
+If you want to **override just a few selected functions**, you can do this by creating an overriding object file and setting `LD_PRELOAD`; the functions in this object file will override just those functions (leaving others as they were).
+
+Usually you can update libraries without concern; if there was an API change, the library creator is supposed to change the soname. That way, multiple libraries can be on a single system, and the right one is selected for each program. However, if a program breaks on an update to a library that kept the same soname, you can force it to use the older library version by copying the old library back somewhere, renaming the program (say to the old name plus \`\`.orig''), and then create a small \`\`wrapper'' script that resets the library to use and calls the real (renamed) program. You could place the old library in its own special area, if you like, though the numbering conventions do permit multiple versions to live in the same directory. The wrapper script could look something like this: 
+
+    #!/bin/sh
+    export LD_LIBRARY_PATH=/usr/local/my_lib:$LD_LIBRARY_PATH
+    exec /usr/bin/my_program.orig $*
+
+Please don't depend on this when you write your own programs; try to make sure that your libraries are either backwards-compatible or that you've incremented the version number in the soname every time you make an incompatible change. This is just an \`\`emergency'' approach to deal with worst-case problems.
+
+You can see the list of the shared libraries used by a program using `ldd(1)`. So, for example, you can see the shared libraries used by ls by typing:
+
+    ldd /bin/ls
+
+Generally you'll see a list of the sonames being depended on, along with the directory that those names resolve to. In practically all cases you'll have at least two dependencies:
+
+* `/lib/ld-linux.so.N` (where N is 1 or more, usually at least 2). This is **the library that loads all other libraries**.
+
+* `libc.so.N` (where N is 6 or more). This is the C library. Even other languages tend to use the C library (at least to implement their own libraries), so most programs at least include this one.
+
+Beware: do not run `ldd` on a program you don't trust. As is clearly stated in the `ldd(1)` manual, ldd works by (in certain cases) by setting a special environment variable (for `ELF` objects, `LD_TRACE_LOADED_OBJECTS`) and then executing the program. It may be possible for an untrusted program to force the ldd user to run arbitrary code (instead of simply showing the ldd information). So, for safety's sake, don't use `ldd` on programs you don't trust to execute.
+
+### 3.6. Incompatible Libraries
