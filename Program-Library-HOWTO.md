@@ -334,3 +334,277 @@ It's worth noting that the GNU loader permits shared libraries to be text files 
 For more information about this, see the texinfo documentation on `ld` linker scripts (ld command language). General information is at info:ld#Options and info:ld#Commands, with likely commands discussed in info:ld#Option Commands.
 
 ### 5.4. Symbol Versioning and Version Scripts
+
+Typically references to external functions are bound on an as-needed basis, and are not all bound when the application starts up. If a shared library is out of date, a required interface may be missing; when the application tries to use that interface, it may suddenly and unexpectedly fail.
+
+A solution to this problem are symbol versioning coupled with version scripts. With symbol versioning, the user can get a warning when they start their program if the libraries being used with the application are too old. You can learn more about this from ld manual's descussion of version scripts at [http://www.gnu.org/manual/ld-2.9.1/html_node/ld_25.html](http://www.gnu.org/manual/ld-2.9.1/html_node/ld_25.html).
+
+### 5.5. GNU libtool
+
+If you're building an application that should port to many systems, you might consider using GNU libtool to build and install libraries. GNU libtool is a generic library support script. Libtool hides the complexity of using shared libraries behind a consistent, portable interface. Libtool provides portable interfaces to create object files, link libraries (static and shared), link executables, debug executables, install libraries, install executables. It also includes libltdl, a portability wrapper for dynamically loading programs. For more information, see its documentation at [http://www.gnu.org/software/libtool/manual.html](http://www.gnu.org/software/libtool/manual.html)
+
+### 5.6. Removing symbols for space
+
+All the symbols included in generated files are useful for debugging, but take up space. If you need space, you can eliminate some of it.
+
+The best approach is to first generate the object files normally, and do all your debugging and testing first (debugging and testing is much easier with them). Afterwards, once you've tested the program thoroughly, use `strip(1)` to remove the symbols. The `strip(1)` command gives you a good deal of control over what symbols to eliminate; see its documentation for details.
+
+Another approach is to use the GNU `ld` options \`\`-S'' and \`\`-s''; \`\`-S'' omits debugger symbol information (but not all symbols) from the output file, while \`\`-s'' omits all symbol information from the output file. You can invoke these options through gcc as \`\`-Wl,-S'' and \`\`-Wl,-s''. If you always strip the symbols and these options are sufficient, feel free, but this is a less flexible approach.
+
+### 5.7. Extremely small executables
+
+You might find the paper [Whirlwind Tutorial on Creating Really Teensy ELF Executables for Linux](http://www.muppetlabs.com/~breadbox/software/tiny/teensy.html) useful. It describes how to make a truly tiny program executable. Frankly, you shouldn't use most of these tricks under normal circumstances, but they're quite instructive in showing how ELF really works.
+
+### 5.8. C++ vs. C
+
+It's worth noting that if you're writing a `C++` program, and you're calling a `C` library function, in your `C++` code you'll need to define the `C` function as `extern "C"`. Otherwise, the linker won't be able to locate the `C` function. Internally, `C++` compilers \`\`mangle'' the names of `C++` functions (e.g., for typing purposes), and they need to be told that a given function should be called as a `C` function (and thus, not have its name mangled).
+
+If you're writing a program library that could be called from `C` or `C++`, it's recommended that you include '`extern "C"`' commands right in your **header files** so that you do this automatically for your users. When combined with the usual `#ifndef` at the top of a file to skip re-executing header files, this means that a typical header file usable by either `C` or `C++` for some header file `foobar.h` would look like this:
+
+    /* Explain here what foobar does */
+
+    #ifndef FOOBAR_H
+    #define FOOBAR_H
+
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+
+    ... header code for foobar goes here ...
+
+    #ifdef  __cplusplus
+    }
+    #endif
+    #endif
+
+### 5.9. Speeding up C++ initialization
+
+The `KDE` developers have noticed that large `GUI C++` applications can take a long time to start up, in part due to its needing to do many relocations. There are several solutions to this. See [Making C++ ready for the desktop (by Waldo Bastian)](http://www.suse.de/~bastian/Export/linking.txt) for more information.
+
+### 5.10. Linux Standard Base (LSB)
+
+The goal of the Linux Standard Base (LSB) project is to develop and promote a set of standards that will increase compatibility among Linux distributions and enable software applications to run on any compliant Linux system. The project's home page is at [http://www.linuxbase.org](http://www.linuxbase.org).
+
+## 6. More Examples
+
+The following are more examples of all three approaches (static, shared, and dynamically loaded libraries). File `libhello.c` is a trivial library, with `libhello.h` as its header. File `demo_use.c` is a trivial caller of the library. This is followed by commented scripts (`script_static` and `script_dynamic`) showing how to use the library as a `static` and `shared` library. This is followed by `demo_dynamic.c` and `script_dynamic`, which show how to use the `shared` library as a `dynamically loaded` library.
+
+### 6.1. File libhello.c
+
+    /* libhello.c - demonstrate library use. */
+
+    #include <stdio.h>
+
+    void hello(void) {
+      printf("Hello, library world.\n");
+    }
+
+### 6.2. File libhello.h
+
+    /* libhello.h - demonstrate library use. */
+
+    void hello(void);
+
+### 6.3. File demo_use.c
+
+    /* demo_use.c -- demonstrate direct use of the "hello" routine */
+
+    #include "libhello.h"
+
+    int main(void) {
+     hello();
+     return 0;
+    }
+
+### 6.4. File script_static
+
+    #!/bin/sh
+    # Static library demo
+
+    # Create static library's object file, libhello-static.o.
+    # I'm using the name libhello-static to clearly
+    # differentiate the static library from the
+    # dynamic library examples, but you don't need to use
+    # "-static" in the names of your
+    # object files or static libraries.
+
+    gcc -Wall -g -c -o libhello-static.o libhello.c
+
+    # Create static library.
+
+    ar rcs libhello-static.a libhello-static.o
+
+    # At this point we could just copy libhello-static.a
+    # somewhere else to use it.
+    # For demo purposes, we'll just keep the library
+    # in the current directory.
+
+    # Compile demo_use program file.
+
+    gcc -Wall -g -c demo_use.c -o demo_use.o
+
+    # Create demo_use program; -L. causes "." to be searched during
+    # creation of the program.  Note that this command causes
+    # the relevant object file in libhello-static.a to be
+    # incorporated into file demo_use_static.
+
+    gcc -g -o demo_use_static demo_use.o -L. -lhello-static
+
+    # Execute the program.
+
+    ./demo_use_static
+
+### 6.5. File script_shared
+
+    #!/bin/sh
+    # Shared library demo
+
+    # Create shared library's object file, libhello.o.
+
+    gcc -fPIC -Wall -g -c libhello.c
+
+    # Create shared library.
+    # Use -lc to link it against C library, since libhello
+    # depends on the C library.
+
+    gcc -g -shared -Wl,-soname,libhello.so.0 -o libhello.so.0.0 libhello.o -lc
+
+    # At this point we could just copy libhello.so.0.0 into
+    # some directory, say /usr/local/lib.
+
+    # Now we need to call ldconfig to fix up the symbolic links.
+ 
+    # Set up the soname.  We could just execute:
+    # ln -sf libhello.so.0.0 libhello.so.0
+    # but let's let ldconfig figure it out.
+
+    /sbin/ldconfig -n .
+
+    # Set up the linker name.
+    # In a more sophisticated setting, we'd need to make
+    # sure that if there was an existing linker name,
+    # and if so, check if it should stay or not.
+
+    ln -sf libhello.so.0 libhello.so
+
+    # Compile demo_use program file.
+
+    gcc -Wall -g -c demo_use.c -o demo_use.o
+
+    # Create program demo_use.
+    # The -L. causes "." to be searched during creation
+    # of the program; note that this does NOT mean that "."
+    # will be searched when the program is executed.
+
+    gcc -g -o demo_use demo_use.o -L. -lhello
+
+    # Execute the program.  Note that we need to tell the program
+    # where the shared library is, using LD_LIBRARY_PATH.
+
+    LD_LIBRARY_PATH="." ./demo_use
+
+### 6.6. File demo_dynamic.c
+
+    /* demo_dynamic.c -- demonstrate dynamic loading and use of the "hello" routine */
+
+    /* Need dlfcn.h for the routines to dynamically load libraries */
+    #include <dlfcn.h>
+
+    #include <stdlib.h>
+    #include <stdio.h>
+
+    /* Note that we don't have to include "libhello.h". However, we do need to specify something related; we need to specify a type that will hold the value we're going to get from dlsym(). */
+
+    /* The type "simple_demo_function" describes a function that takes no arguments, and returns no value: */
+
+    typedef void (*simple_demo_function)(void);
+
+    int main(void) {
+     const char *error;
+     void *module;
+     simple_demo_function demo_function;
+
+     /* Load dynamically loaded library */
+     module = dlopen("libhello.so", RTLD_LAZY);
+     if (!module) {
+       fprintf(stderr, "Couldn't open libhello.so: %s\n",
+               dlerror());
+       exit(1);
+     }
+
+     /* Get symbol */
+     dlerror();
+     demo_function = dlsym(module, "hello");
+     if ((error = dlerror())) {
+       fprintf(stderr, "Couldn't find hello: %s\n", error);
+       exit(1);
+     }
+
+     /* Now call the function in the DL library */
+     (*demo_function)();
+
+     /* All done, close things cleanly */
+     dlclose(module);
+     return 0;
+    }
+
+### 6.7. File script_dynamic
+
+    #!/bin/sh
+    # Dynamically loaded library demo
+
+    # Presume that libhello.so and friends have
+    # been created (see dynamic example).
+
+    # Compile demo_dynamic program file into an object file.
+
+    gcc -Wall -g -c demo_dynamic.c
+
+    # Create program demo_use.
+    # Note that we don't have to tell it where to search for DL libraries,
+    # since the only special library this program uses won't be
+    # loaded until after the program starts up.
+    # However, we DO need the option -ldl to include the library
+    # that loads the DL libraries.
+
+    gcc -g -o demo_dynamic demo_dynamic.o -ldl
+
+    # Execute the program.  Note that we need to tell the
+    # program where get the dynamically loaded library,
+    # using LD_LIBRARY_PATH.
+
+    LD_LIBRARY_PATH="." ./demo_dynamic
+
+## 7. Other Information Sources
+
+Particularly useful sources of information about libraries include the following:
+
+ * \`\`The GCC HOWTO'' by Daniel Barlow. In particular, this HOWTO discusses compiler options for creating libraries and how to query libraries. It covers information not covered here, and vice versa. This HOWTO is available through the Linux Documentation Project at [http://www.linuxdoc.org](http://www.linuxdoc.org).
+
+ * \`\`Executable and Linkable Format (ELF)'' by the Tool Interface Standards (TIS) committee (this is actually one chapter of the Portable Formats Specification Version 1.1 by the same committee). This provides information about the ELF format (it isn't specific to Linux or GNU gcc), and provides a great deal of detail on the ELF format. See [ftp://tsx-11.mit.edu/pub/linux/packages/GCC/ELF.doc.tar.gz](ftp://tsx-11.mit.edu/pub/linux/packages/GCC/ELF.doc.tar.gz) If you get the file from MIT, note that the format is unusual; after gunzipping and untarring, you'll get an \`\`hps'' file; just strip off the top and bottom lines, rename it to a ``ps'' file, and you'll get a printable Postscript file with the usual filename.
+
+ * \`\`ELF: From the Programmer's Perspective'' by Hongjui Lu. This gives Linux and GNU gcc-specific information on ELF, and is available at [ftp://tsx-11.mit.edu/pub/linux/packages/GCC/elf.ps.gz](ftp://tsx-11.mit.edu/pub/linux/packages/GCC/elf.ps.gz).
+
+ * The ld documentation \`\`Using LD, the GNU Linker'' describes ld in far more detail. It is available at [http://www.gnu.org/manual/ld-2.9.1](http://www.gnu.org/manual/ld-2.9.1).
+
+## 8. Copyright and License
+
+This document is Copyright (C) 2000 David A. Wheeler. It is covered by the GNU General Public License (GPL). You may redistribute it without cost. Interpret the document's source text as the ``program'' and adhere to the following terms:
+
+This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+These terms do permit mirroring by other web sites, but please:
+
+ * make sure your mirrors automatically get upgrades from the master site,
+
+ * clearly show the location of the master site, [http://www.dwheeler.com/program-library](http://www.dwheeler.com/program-library), with a hypertext link to the master site, and
+
+ * give me (David A. Wheeler) credit as the author.
+
+The first two points primarily protect me from repeatedly hearing about obsolete bugs. I do not want to hear about bugs I fixed a year ago, just because you are not properly mirroring the document. By linking to the master site, users can check and see if your mirror is up-to-date. I'm sensitive to the problems of sites which have very strong security requirements and therefore cannot risk normal connections to the Internet; if that describes your situation, at least try to meet the other points and try to occasionally sneakernet updates into your environment.
+
+By this license, you may modify the document, but you can't claim that what you didn't write is yours (i.e., plagiarism) nor can you pretend that a modified version is identical to the original work. Modifying the work does not transfer copyright of the entire work to you; this is not a \`\`public domain'' work in terms of copyright law. See the license for details, in particular noting that \`\`You must cause the modified files to carry prominent notices stating that you changed the files and the date of any change.'' If you have questions about what the license allows, please contact me. In most cases, it's better if you send your changes to the master integrator (currently David A. Wheeler), so that your changes will be integrated with everyone else's changes into the master copy.
