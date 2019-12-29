@@ -169,3 +169,168 @@ Generally you'll see a list of the sonames being depended on, along with the dir
 Beware: do not run `ldd` on a program you don't trust. As is clearly stated in the `ldd(1)` manual, ldd works by (in certain cases) by setting a special environment variable (for `ELF` objects, `LD_TRACE_LOADED_OBJECTS`) and then executing the program. It may be possible for an untrusted program to force the ldd user to run arbitrary code (instead of simply showing the ldd information). So, for safety's sake, don't use `ldd` on programs you don't trust to execute.
 
 ### 3.6. Incompatible Libraries
+
+When a new version of a library is binary-incompatible with the old one the soname needs to change. In C, there are four basic reasons that a library would cease to be binary compatible:
+
+ 1. The behavior of a function changes so that it no longer meets its original specification,
+
+ 2. Exported data items change (exception: adding optional items to the ends of structures is okay, as long as those structures are only allocated within the library).
+
+ 3. An exported function is removed.
+
+ 4. The interface of an exported function changes.
+
+If you can avoid these reasons, you can keep your libraries binary-compatible. Said another way, you can keep your Application Binary Interface (ABI) compatible if you avoid such changes. For example, you might want to add new functions but not delete the old ones. You can add items to structures but only if you can make sure that old programs won't be sensitive to such changes by adding items only to the end of the structure, only allowing the library (and not the application) to allocate the structure, making the extra items optional (or having the library fill them in), and so on. Watch out - you probably can't expand structures if users are using them in arrays.
+
+For C++ (and other languages supporting compiled-in templates and/or compiled dispatched methods), the situation is trickier. All of the above issues apply, plus many more issues. The reason is that some information is implemented \`\`under the covers'' in the compiled code, resulting in dependencies that may not be obvious if you don't know how C++ is typically implemented. Strictly speaking, they aren't \`\`new'' issues, it's just that compiled C++ code invokes them in ways that may be surprising to you. The following is a (probably incomplete) list of things that you cannot do in C++ and retain binary compatibility, as reported by [Troll Tech's Technical FAQ](http://www.trolltech.com/developer/faq/tech.html#bincomp):
+
+ 1. add reimplementations of virtual functions (unless it it safe for older binaries to call the original implementation), because the compiler evaluates SuperClass::virtualFunction() calls at compile-time (not link-time).
+
+ 2. add or remove virtual member functions, because this would change the size and layout of the vtbl of every subclass.
+
+ 3. change the type of any data members or move any data members that can be accessed via inline member functions.
+
+ 4. change the class hierarchy, except to add new leaves. 
+
+ 5. add or remove private data members, because this would change the size and layout of every subclass. 
+
+ 6. remove public or protected member functions unless they are inline.
+
+ 7. make a public or protected member function inline.
+
+ 8. change what an inline function does, unless the old version continues working.
+
+ 9. change the access rights (i.e. public, protected or private) of a member function in a portable program, because some compilers mangle the access rights into the function name.
+
+Given this lengthy list, developers of C++ libraries in particular must plan for more than occasional updates that break binary compatibility. Fortunately, on Unix-like systems (including Linux) you can have multiple versions of a library loaded at the same time, so while there is some disk space loss, users can still run \`\`old'' programs needing old libraries.
+
+## 4. Dynamically Loaded (DL) Libraries
+
+Dynamically loaded (DL) libraries are libraries that are loaded at times other than during the startup of a program. They're particularly useful for implementing **plugins** or **modules**, because they permit waiting to load the plugin until it's needed. For example, the Pluggable Authentication Modules (PAM) system uses DL libraries to permit administrators to configure and reconfigure authentication. They're also useful for implementing **interpreters** that wish to occasionally compile their code into machine code and use the compiled version for efficiency purposes, all without stopping. For example, this approach can be useful in implementing a just-in-time compiler or multi-user dungeon (MUD).
+
+In Linux, DL libraries aren't actually special from the point-of-view of their format; they are built as standard object files or standard shared libraries as discussed above. The main difference is that the libraries aren't automatically loaded at program link time or start-up; instead, there is an API for **opening a library**, **looking up symbols**, **handling errors**, and **closing the library**. C users will need to include the header file `<dlfcn.h>` to use this API.
+
+### dlopen()
+
+The `dlopen(3)` function opens a library and prepares it for use. In C its prototype is:
+
+    void * dlopen(const char *filename, int flag);
+
+If filename begins with \`\`/'' (i.e., it's an absolute path), `dlopen()` will just try to use it (it won't search for a library). Otherwise, `dlopen()` will search for the library in the following order:
+
+ 1. A colon-separated list of directories in the user's `LD_LIBRARY_PATH` environment variable.
+
+ 2. The list of libraries specified in `/etc/ld.so.cache` (which is generated from `/etc/ld.so.conf`).
+
+ 3. `/lib`, followed by `/usr/lib`. Note the order here; this is the reverse of the order used by the old `a.out` loader. The old a.out loader, when loading a program, first searched `/usr/lib`, then `/lib` (see the man page `ld.so(8)`). This shouldn't normally matter, since a library should only be in one or the other directory (never both), and different libraries with the same name are a disaster waiting to happen.
+
+In `dlopen()`, the value of flag must be either `RTLD_LAZY`, meaning \`\`resolve undefined symbols as code from the dynamic library is executed'', or `RTLD_NOW`, meaning \`\`resolve all undefined symbols before dlopen() returns and fail if this cannot be done''. `RTLD_GLOBAL` may be optionally or'ed with either value in flag, meaning that the external symbols defined in the library will be made available to subsequently loaded libraries. While you're debugging, you'll probably want to use `RTLD_NOW`; using `RTLD_LAZY` can create inscrutable errors if there are unresolved references. Using `RTLD_NOW` makes opening the library take slightly longer (but it speeds up lookups later); if this causes a user interface problem you can switch to `RTLD_LAZY` later.
+
+If the libraries depend on each other (e.g., X depends on Y), then you need to load the dependees first (in this example, load Y first, and then X).
+
+The return value of `dlopen()` is a \`\`handle'' that should be considered an opaque value to be used by the other DL library routines. `dlopen()` will return `NULL` if the attempt to load does not succeed, and you need to check for this. If the same library is loaded more than once with `dlopen()`, the same file handle is returned.
+In older systems, if the library exports a routine named `_init`, then that code is executed before `dlopen()` returns. You can use this fact in your own libraries to implement initialization routines. However, libraries should not export routines named `_init` or `_fini`. Those mechanisms are **obsolete**, and may result in undesired behavior. Instead, libraries should export routines using the `__attribute__((constructor))` and `__attribute__((destructor))` function attributes (presuming you're using `gcc`). See Section 5.2 for more information.
+
+### 4.2. dlerror()
+
+Errors can be reported by calling `dlerror()`, which returns a string describing the error from the last call to `dlopen()`, `dlsym()`, or `dlclose()`. One oddity is that after calling `dlerror()`, future calls to `dlerror()` will return `NULL` until another error has been encountered.
+
+### 4.3. dlsym()
+
+There's no point in loading a DL library if you can't use it. The main routine for using a DL library is `dlsym(3)`, which looks up the value of a symbol in a given (opened) library. This function is defined as:
+
+    void * dlsym(void *handle, char *symbol);
+
+the `handle` is the value returned from `dlopen`, and `symbol` is a NIL-terminated string. If you can avoid it, don't store the result of dlsym() into a void* pointer, because then you'll have to cast it each time you use it (and you'll give less information to other people trying to maintain the program).
+
+`dlsym()` will return a `NULL` result if the symbol wasn't found. If you know that the symbol could never have the value of `NULL` or zero, that may be fine, but there's a potential ambiguity otherwise: if you got a NULL, does that mean there is no such symbol, or that NULL is the value of the symbol? The standard solution is to call `dlerror()` **first** (to **clear any error** condition that may have existed), then call `dlsym()` to request a symbol, then call `dlerror()` **again** to **see if an error occurred**. A code snippet would look like this:
+
+    dlerror(); /* clear error code */
+    s = (actual_type) dlsym(handle, symbol_being_searched_for);
+    if ((err = dlerror()) != NULL) {
+    /* handle error, the symbol wasn't found */
+    } else {
+    /* symbol found, its value is in s */
+    }
+
+### 4.4. dlclose()
+
+The converse of `dlopen()` is `dlclose()`, which closes a DL library. The dl library maintains link counts for dynamic file handles, so a dynamic library is not actually deallocated until `dlclose` has been called on it **as many times as** `dlopen` has succeeded on it. Thus, it's not a problem for the same program to load the same library multiple times. If a library is deallocated, its function `_fini` is called (if it exists) in older libraries, but `_fini` is an obsolete mechanism and shouldn't be relied on. Instead, libraries should export routines using the `__attribute__((constructor))` and `__attribute__((destructor))` function attributes. See Section 5.2 for more information. Note: `dlclose()` returns `0` on success, and non-zero on error; some Linux manual pages don't mention this.
+
+### 4.5. DL Library Example
+
+Here's an example from the man page of `dlopen(3)`. This example loads the math library and prints the `cosine` of `2.0`, and it **checks for errors at every step** (recommended):
+
+    #include <stdlib.h>
+    #include <stdio.h>
+    #include <dlfcn.h>
+
+    int main(int argc, char **argv) {
+        void *handle;
+        double (*cosine)(double);
+        char *error;
+
+        handle = dlopen ("/lib/libm.so.6", RTLD_LAZY);
+        if (!handle) {
+            fputs (dlerror(), stderr);
+            exit(1);
+        }
+
+        cosine = dlsym(handle, "cos");
+        if ((error = dlerror()) != NULL)  {
+            fputs(error, stderr);
+            exit(1);
+        }
+
+        printf ("%f\n", (*cosine)(2.0));
+        dlclose(handle);
+    }
+
+If this program were in a file named "`foo.c`", you would build the program with the following command:
+
+    gcc -o foo foo.c -ldl
+
+## 5. Miscellaneous
+
+### 5.1. nm command
+
+The `nm(1)` command can report the list of symbols in a given library. It works on both static and shared libraries. For a given library `nm(1)` can list the symbol names defined, each symbol's value, and the symbol's type. It can also identify where the symbol was defined in the source code (by filename and line number), if that information is available in the library (see the `-l` option).
+
+The symbol type requires a little more explanation. The type is displayed as a letter; lowercase means that the symbol is local, while uppercase means that the symbol is global (external). Typical symbol types include `T` (a normal definition in the code section), `D` (initialized data section), `B` (uninitialized data section), `U` (undefined; the symbol is used by the library but not defined by the library), and `W` (weak; if another library also defines this symbol, that definition overrides this one).
+
+If you know the name of a function, but you truly can't remember what library it was defined in, you can use nm's \`\`-o'' option (which prefixes the filename in each line) along with grep to find the library name. From a Bourne shell, you can search all the libraries in `/lib`, `/usr/lib`, direct subdirectories of `/usr/lib`, and `/usr/local/lib` for \`\`cos'' as follows:
+
+    nm -o /lib/* /usr/lib/* /usr/lib/*/* /usr/local/lib/* 2> /dev/null | grep 'cos$' 
+
+### 5.2. Library constructor and destructor functions
+
+Libraries should export initialization and cleanup routines using the `gcc` `__attribute__((constructor))` and `__attribute__((destructor))` function attributes. See the `gcc` info pages for information on these. Constructor routines are executed before `dlopen` returns (or before `main()` is started if the library is loaded at load time). Destructor routines are executed before `dlclose` returns (or after `exit()` or completion of `main()` if the library is loaded at load time). The C prototypes for these functions are:
+
+    void __attribute__ ((constructor)) my_init(void);
+    void __attribute__ ((destructor)) my_fini(void);
+
+Shared libraries must not be compiled with the `gcc` arguments \`\`-nostartfiles'' or \`\`-nostdlib''. If those arguments are used, the constructor/destructor routines will not be executed (unless special measures are taken).
+
+#### 5.2.1. Special functions _init and _fini (OBSOLETE/DANGEROUS)
+
+Historically there have been two special functions, `_init` and `_fini` that can be used to control constructors and destructors. However, they are obsolete, and their use can lead to unpredicatable results. Your libraries should not use these; use the function attributes constructor and destructor above instead.
+
+If you must work with old systems or code that used `_init` or `_fini`, here's how they worked. Two special functions were defined for initializing and finalizing a module: `_init` and `_fini`. If a function \`\`_init'' is exported in a library, then it is called when the library is first opened (via `dlopen()` or simply as a shared library). In a C program, this just means that you defined some function named `_init`. There is a corresponding function called `_fini`, which is called whenever a client finishes using the library (via a call `dlclose()` that brings its reference count to zero, or on normal exit of the program). The C prototypes for these functions are:
+
+    void _init(void);
+    void _fini(void);
+
+In this case, when compiling the file into a \`\`.o'' file in `gcc`, be sure to add the gcc option \`\`-nostartfiles''. This keeps the C compiler from linking the system startup libraries against the `.so     file. Otherwise, you'll get a \`\`multiple-definition'' error. Note that this is completely different than compiling modules using the recommended function attributes. My thanks to Jim Mischel and Tim Gentry for their suggestion to add this discussion of `_init` and `_fini`, as well as help in creating it.
+
+### 5.3. Shared Libraries Can Be Scripts
+
+It's worth noting that the GNU loader permits shared libraries to be text files using a specialized scripting language instead of the usual library format. This is useful for indirectly combining other libraries. For example, here's the listing of `/usr/lib/libc.so` on one of my systems: 
+
+    /* GNU ld script
+       Use the shared library, but some functions are only in
+       the static library, so try that secondarily.  */
+    GROUP ( /lib/libc.so.6 /usr/lib/libc_nonshared.a )
+
+For more information about this, see the texinfo documentation on `ld` linker scripts (ld command language). General information is at info:ld#Options and info:ld#Commands, with likely commands discussed in info:ld#Option Commands.
+
+### 5.4. Symbol Versioning and Version Scripts
