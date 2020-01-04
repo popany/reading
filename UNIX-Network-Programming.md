@@ -225,3 +225,61 @@ Readers interested in the history of Unix networking should consult [Salus 1994]
 ## Chapter 2. The Transport Layer: TCP, UDP, and SCTP 
 
 ### 2.1 Introduction
+
+This chapter focuses on the **transport layer**: TCP, UDP, and Stream Control Transmission Protocol (SCTP). Most client/server applications use either TCP or UDP. SCTP is a newer protocol, originally designed for transport of telephony signaling across the Internet. These transport protocols use the **network-layer** protocol IP, either IPv4 or IPv6. While it is possible to use IPv4 or IPv6 directly, bypassing the transport layer, this technique, often called raw sockets, is used much less frequently. Therefore, we have a more detailed description of IPv4 and IPv6, along with ICMPv4 and ICMPv6, in ***Appendix A***.
+
+**UDP** is a simple, unreliable **datagram** protocol, while **TCP** is a sophisticated, reliable **byte-stream** protocol. SCTP is similar to TCP as a reliable transport protocol, but it also provides **message boundaries**, transport-level support for multihoming, and a way to minimize head-of-line blocking. We need to understand the services provided by these transport protocols to the application, so that we know what is handled by the protocol and what we must handle in the application.
+
+There are features of TCP that, when understood, make it easier for us to write robust clients and servers. Also, when we understand these features, it becomes easier to debug our clients and servers using commonly provided tools such as netstat. We cover various topics in this chapter that fall into this category: TCP's three-way handshake, TCP's connection termination sequence, and TCP's `TIME_WAIT` state; SCTP's four-way handshake and SCTP's connection termination; plus SCTP, TCP, and UDP buffering by the socket layer, and so on.
+
+### 2.2 The Big Picture
+
+Although the protocol suite is called "TCP/IP," there are more members of this family than just TCP and IP. ***Figure 2.1*** shows an overview of these protocols.
+
+#### Figure 2.1. Overview of TCP/IP protocols
+
+### 2.3 User Datagram Protocol (UDP)
+
+UDP is a simple transport-layer protocol. It is described in RFC 768 [Postel 1980]. The application writes a **message** to a UDP socket, which is then encapsulated in a **UDP datagram**, which is then further encapsulated as an **IP datagram**, which is then sent to its destination. There is **no guarantee** that a UDP datagram will ever **reach** its final destination, that **order** will be preserved across the network, or that datagrams arrive only **once**.
+
+The problem that we encounter with network programming using UDP is its **lack of reliability**. If a datagram reaches its final destination but the **checksum** detects an error, or if the datagram is **dropped** in the network, it is not delivered to the UDP socket and is not automatically **retransmitted**. If we want to be certain that a datagram reaches its destination, we can build lots of features into our application: **acknowledgments** from the other end, **timeouts**, **retransmissions**, and the like.
+
+Each UDP datagram has a length. The **length** of a datagram is passed to the receiving application along with the data. We have already mentioned that TCP is a byte-stream protocol, without any record boundaries at all (***Section 1.2***), which differs from UDP.
+
+We also say that UDP provides a **connectionless** service, as there need not be any **long-term** relationship between a UDP client and server. For example, a UDP client can create a socket and send a datagram to a given server and then immediately send another datagram on the **same socket** to a **different server**. Similarly, a UDP server can receive several datagrams on a **single UDP socket**, each from a **different client**.
+
+### 2.4 Transmission Control Protocol (TCP)
+
+The service provided by TCP to an application is different from the service provided by UDP. TCP is described in RFC 793 [Postel 1981c], and updated by RFC 1323 [Jacobson, Braden, and Borman 1992], RFC 2581 [Allman, Paxson, and Stevens 1999], RFC 2988 [Paxson and Allman 2000], and RFC 3390 [Allman, Floyd, and Partridge 2002]. First, TCP provides **connections** between clients and servers. A TCP client establishes a connection with a given server, exchanges data with that server across the connection, and then terminates the connection.
+
+TCP also provides **reliability**. When TCP sends data to the other end, it requires an **acknowledgment** in return. If an acknowledgment is not received, TCP automatically **retransmits** the data and waits a **longer** amount of time. After some number of retransmissions, TCP will give up, with the total amount of time spent trying to send data typically between **4 and 10 minutes** (depending on the implementation).
+
+Note that TCP does not guarantee that the data will be received by the other endpoint, as this is impossible. It delivers data to the other endpoint if possible, and **notifies the user** (by giving up on retransmissions and breaking the connection) if it is not possible. Therefore, TCP cannot be described as a 100% reliable protocol; it provides **reliable delivery** of data or **reliable notification** of failure.
+
+TCP contains algorithms to estimate the **round-trip time** (RTT) between a client and server dynamically so that it knows how long to wait for an acknowledgment. For example, the RTT on a LAN can be milliseconds while across a WAN, it can be seconds. Furthermore, TCP continuously estimates the RTT of a given connection, because the RTT is affected by variations in the network traffic.
+
+TCP also **sequences** the data by associating a sequence number with every byte that it sends. For example, assume an application writes 2,048 bytes to a TCP socket, causing TCP to send two segments, the first containing the data with sequence numbers 1–1,024 and the second containing the data with sequence numbers 1,025–2,048. (A **segment** is the unit of data that TCP passes to IP.) If the segments arrive out of order, the receiving TCP will reorder the two segments based on their sequence numbers before passing the data to the receiving application. If TCP receives duplicate data from its peer (say the peer thought a segment was lost and retransmitted it, when it wasn't really lost, the network was just overloaded), it can detect that the data has been duplicated (from the sequence numbers), and discard the **duplicate** data.
+
+There is no reliability provided by **UDP**. UDP itself does not provide anything like **acknowledgments**, **sequence** numbers, **RTT** estimation, **timeouts**, or **retransmissions**. If a UDP datagram is duplicated in the network, two copies can be delivered to the receiving host. Also, if a UDP client sends two datagrams to the same destination, they can be reordered by the network and arrive out of order. UDP applications must handle all these cases, as we will show in ***Section 22.5***.
+
+TCP provides **flow control**. TCP always tells its peer exactly how many **bytes of data** it is **willing to accept** from the peer at any one time. This is called the **advertised window**. At any time, the window is the amount of room currently available in the **receive buffer**, guaranteeing that the sender cannot overflow the receive buffer. The window **changes dynamically** over time: As data is received from the sender, the window size **decreases**, but as the receiving application reads data from the buffer, the window size **increases**. It is possible for the window to **reach 0**: when TCP's receive buffer for a socket is full and it must wait for the application to read data from the buffer before it can take any more data from the peer.
+
+UDP provides no flow control. It is easy for a **fast UDP sender** to transmit datagrams at a rate that the UDP receiver cannot keep up with, as we will show in ***Section 8.13***.
+
+Finally, a TCP connection is **full-duplex**. This means that an application can **send** and **receive** data in **both directions** on a given connection at any time. This means that TCP must **keep track of state information** such as **sequence numbers** and **window sizes** for each direction of data flow: sending and receiving. After a full-duplex connection is established, it can be turned into a **simplex connection** if desired (see ***Section 6.6***).
+
+**UDP can be full-duplex**.
+
+### 2.5 Stream Control Transmission Protocol (SCTP) 
+
+SCTP provides services similar to those offered by UDP and TCP. SCTP is described in RFC 2960 [Stewart et al. 2000], and updated by RFC 3309 [Stone, Stewart, and Otis 2002]. An introduction to SCTP is available in RFC 3286 [Ong and Yoakum 2002]. **SCTP** provides associations between clients and servers. SCTP also provides applications with **reliability**, **sequencing**, **flow control**, and **full-duplex** data transfer, like TCP. The word "association" is used in SCTP instead of "connection" to avoid the connotation that a connection involves communication between only two IP addresses. An **association** refers to a communication between **two systems**, which may involve **more than two addresses** due to **multihoming**.
+
+Unlike TCP, SCTP is **message-oriented**. It provides sequenced delivery of individual records. Like UDP, the **length of a record** written by the sender is passed to the receiving application.
+
+SCTP can provide **multiple streams** between connection endpoints, each with its **own reliable sequenced** delivery of messages. A lost message in one of these streams does **not block delivery** of messages in any of the other streams. This approach is in contrast to TCP, where a loss at any point in the single stream of bytes **blocks delivery** of all future data on the connection until the loss is repaired.
+
+SCTP also provides a **multihoming** feature, which allows a **single SCTP endpoint** to support **multiple IP addresses**. This feature can provide increased robustness against network failure. An endpoint can have multiple **redundant** network connections, where each of these networks has a different connection to the Internet infrastructure. SCTP can work around a failure of one network or path across the Internet by switching to another address already associated with the SCTP association.
+
+Similar robustness can be obtained from **TCP** with help from **routing protocols**. For example, BGP connections within a domain (iBGP) often use addresses that are assigned to a virtual interface within the router as the endpoints of the TCP connection. The domain's routing protocol ensures that if there is a route between two routers, it can be used, which would not be possible if the addresses used belonged to an interface that went down, for example. SCTP's multihoming feature allows hosts to multihome, not just routers, and allows this multihoming to occur across different service providers, which the routing-based TCP method cannot allow.
+
+### 2.6 TCP Connection Establishment and Termination
