@@ -373,3 +373,83 @@ We then show the four segments that terminate the connection. Notice that the en
 It is important to notice in ***Figure 2.5*** that if the entire purpose of this connection was to send a one-segment request and receive a one-segment reply, there would be eight segments of overhead involved when using TCP. If UDP was used instead, only two packets would be exchanged: the request and the reply. But switching from TCP to UDP removes all the reliability that TCP provides to the applizcation, pushing lots of these details from the transport layer (TCP) to the UDP application. Another important feature provided by TCP is congestion control, which must then be handled by the UDP application. Nevertheless, it is important to understand that many applications are built using UDP because the application exchanges small amounts of data and UDP avoids the overhead of TCP connection establishment and connection termination.
 
 ### 2.7 TIME_WAIT State
+
+Undoubtedly, one of the most misunderstood aspects of TCP with regard to network programming is its **TIME_WAIT** state. We can see in ***Figure 2.4*** that the end that performs the active close goes through this state. The duration that this endpoint remains in this state is twice the **maximum segment lifetime** (**MSL**), sometimes called **2MSL**.
+
+Every implementation of TCP must choose a value for the **MSL**. The recommended value in RFC 1122 [Braden 1989] is 2 minutes, although Berkeley-derived implementations have traditionally used a value of 30 seconds instead. This means the duration of the **TIME_WAIT** state is **between 1 and 4 minutes**. The MSL is the maximum amount of time that any given IP datagram can live in a network. We know this time is bounded because every datagram contains an 8-bit hop limit (the IPv4 TTL field in ***Figure A.1*** and the IPv6 hop limit field in ***Figure A.2***) with a maximum value of 255. Although this is a hop limit and not a true time limit, the assumption is made that a packet with the maximum hop limit of 255 cannot exist in a network for more than MSL seconds.
+
+The way in which a packet gets "lost" in a network is usually the result of **routing anomalies**. A router crashes or a link between two routers goes down and it takes the routing protocols seconds or minutes to stabilize and find an alternate path. During that time period, **routing loops** can occur (router A sends packets to router B, and B sends them back to A) and packets can get caught in these loops. In the meantime, assuming the lost packet is a TCP segment, the sending TCP times out and retransmits the packet, and the retransmitted packet gets to the final destination by some alternate path. But sometime later (up to MSL seconds after the lost packet started on its journey), the routing loop is corrected and the packet that was lost in the loop is sent to the final destination. This original packet is called a **lost duplicate** or a wandering duplicate. TCP must handle these duplicates.
+
+There are two reasons for the TIME_WAIT state:
+
+1. To implement TCP's full-duplex connection termination reliably
+
+2. To allow old duplicate segments to expire in the network
+
+The first reason can be explained by looking at ***Figure 2.5*** and assuming that the final ACK is lost. The server will resend its final FIN, so the client must maintain state information, allowing it to resend the final ACK. If it did not maintain this information, it would respond with an RST (a different type of TCP segment), which would be interpreted by the server as an error. If TCP is performing all the work necessary to terminate both directions of data flow cleanly for a connection (its full-duplex close), then it must correctly handle the loss of any of these four segments. This example also shows why the end that performs the **active close** is the end that remains in the **TIME_WAIT** state: because that end is the one that might have to retransmit the final ACK.
+
+To understand the second reason for the TIME_WAIT state, assume we have a TCP connection between 12.106.32.254 port 1500 and 206.168.112.219 port 21. This connection is closed and then sometime later, we establish another connection between the same IP addresses and ports: 12.106.32.254 port 1500 and 206.168.112.219 port 21. This latter connection is called an **incarnation** of the previous connection since the IP addresses and ports are the same. TCP must prevent **old duplicates** from a connection from reappearing at some later time and being misinterpreted as belonging to a new incarnation of the same connection. To do this, TCP will **not initiate** a new incarnation of a connection that is currently in the TIME_WAIT state. Since the duration of the **TIME_WAIT** state is **twice the MSL**, this allows MSL seconds for a packet in one direction to be lost, and another MSL seconds for the reply to be lost. By enforcing this rule, we are guaranteed that when we successfully establish a TCP connection, all old duplicates from previous incarnations of the connection have expired in the network.
+
+There is an exception to this rule. Berkeley-derived implementations will initiate a new incarnation of a connection that is currently in the TIME_WAIT state if the arriving SYN has a sequence number that is "**greater than**" the **ending sequence** number from the previous incarnation. Pages 958–959 of TCPv2 talk about this in more detail. This requires the server to perform the active close, since the TIME_WAIT state must exist on the end that receives the next SYN. This capability is used by the rsh command. RFC 1185 [Jacobson, Braden, and Zhang 1990] talks about some pitfalls in doing this.
+
+### 2.8 SCTP Association Establishment and Termination
+
+SCTP is connection-oriented like TCP, so it also has association establishment and termination handshakes. However, SCTP's handshakes are different than TCP's, so we describe them here.
+
+#### Four-Way Handshake
+
+The following scenario, similar to TCP, occurs when an SCTP association is established:
+
+1. The server must be prepared to accept an incoming association. This preparation is normally done by calling `socket`, `bind`, and `listen` and is called a **passive open**.
+
+2. The client issues an active open by calling **`connect`** or by **sending a message**, which implicitly opens the association. This causes the client SCTP to send an **INIT message** (which stands for "initialization") to tell the server the client's **list of IP addresses**, **initial sequence number**, **initiation tag** to identify all packets in this association, **number of outbound streams** the client is requesting, and number of inbound streams the client can support.
+
+3. The server acknowledges the client's INIT message with an **INIT-ACK message**, which contains the server's **list of IP addresses**, **initial sequence number**, **initiation tag**, **number of outbound streams** the server is requesting, number of inbound streams the server can support, and a **state cookie**. The state cookie contains all of the state that the server needs to ensure that the association is valid, and is digitally signed to ensure its validity.
+
+4. The client echos the server's state cookie with a **COOKIE-ECHO message**. This message may also contain user data bundled within the same packet.
+
+5. The server **acknowledges** that the cookie was correct and that the association was established with a **COOKIE-ACK message**. This message may also contain user data bundled within the same packet.
+
+The minimum number of packets required for this exchange is four; hence, this process is called SCTP's **four-way handshake**. We show a picture of the four segments in ***Figure 2.6***.
+
+#### Figure 2.6. SCTP four-way handshake
+
+The SCTP four-way handshake is similar in many ways to TCP's three-way handshake, except for the **cookie generation**, which is an integral part. The INIT carries with it (along with its many parameters) a verification tag, Ta, and an initial sequence number, *J*. The tag Ta must be present in every packet sent by the peer for the life of the association. The initial sequence number *J* is used as the starting sequence number for DATA messages termed DATA chunks. The peer also chooses a verification tag, *Tz*, which must be present in each of its packets for the life of the association. Along with the verification tag and initial sequence number, *K*, the receiver of the INIT also sends a cookie, *C*. The cookie contains all the state needed to set up the SCTP association, so that the server's SCTP stack does not need to keep information about the associating client. Further details on SCTP's association setup can be found in ***Chapter 4*** of [Stewart and Xie 2001].
+
+At the conclusion of the four-way handshake, each side chooses a primary destination address. The primary destination address is used as the default destination to which data will be sent in the absence of network failure.
+
+The four-way handshake is used in SCTP to avoid a form of denial-of-service attack we will discuss in ***Section 4.5***.
+
+SCTP's four-way handshake using Cookies formalizes a method of protection against this attack. Many TCP implementations use a similar method; the big difference is that in TCP, the cookie state must be encoded into the initial sequence number, which is only 32 bits. SCTP provides an arbitrary-length field, and requires cryptographic security to prevent attacks.
+
+#### SCTP State Transition Diagram
+
+The operation of SCTP with regard to association establishment and termination can be specified with a **state transition diagram**. We show this in ***Figure 2.8***.
+
+#### Figure 2.8. SCTP state transition diagram
+
+As in ***Figure 2.4***, the transitions from one state to another in the state machine are dictated by the rules of SCTP, based on the current state and the chunk received in that state. For example, if an application performs an active open in the CLOSED state, SCTP sends an INIT and the new state is COOKIE-WAIT. If SCTP next receives an INIT ACK, it sends a COOKIE ECHO and the new state is COOKIE-ECHOED. If SCTP then receives a COOKIE ACK, it moves to the ESTABLISHED state. This final state is where most data transfer occurs, although DATA chunks can be piggybacked on COOKIE ECHO and COOKIE ACK chunks.
+
+The two arrows leading from the ESTABLISHED state deal with the termination of an association. If an application calls close before receiving a SHUTDOWN (an active close), the transition is to the SHUTDOWN-PENDING state. However, if an application receives a SHUTDOWN while in the ESTABLISHED state (a passive close), the transition is to the SHUTDOWN-RECEIVED state.
+
+#### Watching the Packets
+
+***Figure 2.9*** shows the actual packet exchange that takes place for a sample SCTP association: the association establishment, data transfer, and association termination. We also show the SCTP states through which each endpoint passes.
+
+#### Figure 2.9. Packet exchange for SCTP association
+
+In this example, the client piggybacks its first data chunk on the COOKIE ECHO, and the server replies with data on the COOKIE ACK. In general, the COOKIE ECHO will often have one or more DATA chunks bundled with it when the application is using the one-to-many interface style (we will discuss the one-to-one and one-to-many interface styles in ***Section 9.2***).
+
+The unit of information within an SCTP packet is a "chunk." A "chunk" is self-descriptive and contains a chunk type, chunk flags, and a chunk length. This approach facilitates the bundling of chunks simply by combining multiple chunks into an SCTP outbound packet (details on chunk bundling and normal data transmission procedures can be found in ***Chapter 5*** of [Stewart and Xie 2001]).
+
+#### SCTP Options
+
+SCTP uses parameters and chunks to facilitate optional features. New features are defined by adding either of these two items, and allowing normal SCTP processing rules to report unknown parameters and unknown chunks. The upper two bits of both the parameter space and the chunk space dictate what an SCTP receiver should do with an unknown parameter or chunk (further details can be found in ***Section 3.1*** of [Stewart and Xie 2001]).
+
+Currently, two extensions for SCTP are under development:
+
+1. The dynamic address extension, which allows cooperating SCTP endpoints to dynamically add and remove IP addresses from an existing association.
+
+2. The partial reliability extension, which allows cooperating SCTP endpoints, under application direction, to limit the retransmission of data. When a message becomes too old to send (according to the application's direction), the message will be skipped and thus no longer sent to the peer. This means that not all data is assured of arrival at the other end of the association.
+
+### 2.9 Port Numbers
