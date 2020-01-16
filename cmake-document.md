@@ -121,3 +121,135 @@ The contents of the `INTERFACE_INCLUDE_DIRECTORIES`, `INTERFACE_COMPILE_DEFINITI
 Because it is common to require that the source directory and corresponding build directory are added to the `INCLUDE_DIRECTORIES`, the `CMAKE_INCLUDE_CURRENT_DIR` variable can be enabled to conveniently add the corresponding directories to the `INCLUDE_DIRECTORIES` of all targets. The variable `CMAKE_INCLUDE_CURRENT_DIR_IN_INTERFACE` can be enabled to add the corresponding directories to the `INTERFACE_INCLUDE_DIRECTORIES` of all targets. This makes use of targets in multiple different directories convenient through use of the `target_link_libraries()` command.
 
 #### Transitive Usage Requirements
+
+The usage requirements of a target can **transitively propagate** to dependents. The `target_link_libraries()` command has `PRIVATE`, `INTERFACE` and `PUBLIC` keywords to control the propagation.
+
+    add_library(archive archive.cpp)
+    target_compile_definitions(archive INTERFACE USING_ARCHIVE_LIB)
+
+    add_library(serialization serialization.cpp)
+    target_compile_definitions(serialization INTERFACE USING_SERIALIZATION_LIB)
+
+    add_library(archiveExtras extras.cpp)
+    target_link_libraries(archiveExtras PUBLIC archive)
+    target_link_libraries(archiveExtras PRIVATE serialization)
+    # archiveExtras is compiled with -DUSING_ARCHIVE_LIB
+    # and -DUSING_SERIALIZATION_LIB
+
+    add_executable(consumer consumer.cpp)
+    # consumer is compiled with -DUSING_ARCHIVE_LIB
+    target_link_libraries(consumer archiveExtras)
+
+Because `archive` is a `PUBLIC` dependency of `archiveExtras`, the usage requirements of it are propagated to `consumer` too. Because `serialization` is a `PRIVATE` dependency of `archiveExtras`, the usage requirements of it are not propagated to `consumer`.
+
+Generally, a dependency should be specified in a use of `target_link_libraries()` with the `PRIVATE` keyword if it is used by **only the implementation** of a library, and **not in the header files**. If a dependency is additionally **used in the header files** of a library (e.g. for class inheritance), then it should be specified as a `PUBLIC` dependency. A dependency which is **not used by the implementation** of a library, but only by its headers should be specified as an `INTERFACE` dependency. The `target_link_libraries()` command may be invoked with multiple uses of each keyword:
+
+    target_link_libraries(archiveExtras
+      PUBLIC archive
+      PRIVATE serialization
+    )
+
+Usage requirements are propagated by reading the `INTERFACE_` variants of target properties from dependencies and appending the values to the `non-INTERFACE_` variants of the operand. For example, the `INTERFACE_INCLUDE_DIRECTORIES` of dependencies is read and appended to the `INCLUDE_DIRECTORIES` of the operand. In cases where order is relevant and maintained, and the order resulting from the `target_link_libraries()` calls does not allow correct compilation, use of an appropriate command to set the property directly may update the order.
+
+For example, if the linked libraries for a target must be specified in the order `lib1` `lib2` `lib3` , but the include directories must be specified in the order `lib3` `lib1` `lib2`:
+
+    target_link_libraries(myExe lib1 lib2 lib3)
+    target_include_directories(myExe
+      PRIVATE $<TARGET_PROPERTY:lib3,INTERFACE_INCLUDE_DIRECTORIES>)
+
+Note that care must be taken when specifying usage requirements for targets which will be exported for installation using the `install(EXPORT)` command. See Creating Packages for more.
+
+#### Compatible Interface Properties
+
+Some target properties are required to be compatible between a target and the interface of each dependency. For example, the `POSITION_INDEPENDENT_CODE` target property may specify a boolean value of whether a target should be compiled as position-independent-code, which has platform-specific consequences. A target may also specify the usage requirement `INTERFACE_POSITION_INDEPENDENT_CODE` to communicate that consumers must be compiled as position-independent-code.
+
+    add_executable(exe1 exe1.cpp)
+    set_property(TARGET exe1 PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+    add_library(lib1 SHARED lib1.cpp)
+    set_property(TARGET lib1 PROPERTY INTERFACE_POSITION_INDEPENDENT_CODE ON)
+
+    add_executable(exe2 exe2.cpp)
+    target_link_libraries(exe2 lib1)
+
+Here, both exe1 and exe2 will be compiled as position-independent-code. lib1 will also be compiled as position-independent-code because that is the default setting for SHARED libraries. If dependencies have conflicting, non-compatible requirements cmake(1) issues a diagnostic:
+
+    add_library(lib1 SHARED lib1.cpp)
+    set_property(TARGET lib1 PROPERTY INTERFACE_POSITION_INDEPENDENT_CODE ON)
+
+    add_library(lib2 SHARED lib2.cpp)
+    set_property(TARGET lib2 PROPERTY INTERFACE_POSITION_INDEPENDENT_CODE OFF)
+
+    add_executable(exe1 exe1.cpp)
+    target_link_libraries(exe1 lib1)
+    set_property(TARGET exe1 PROPERTY POSITION_INDEPENDENT_CODE OFF)
+
+    add_executable(exe2 exe2.cpp)
+    target_link_libraries(exe2 lib1 lib2)
+
+The `lib1` requirement `INTERFACE_POSITION_INDEPENDENT_CODE` is not “compatible” with the `POSITION_INDEPENDENT_CODE` property of the exe1 target. The library requires that consumers are built as position-independent-code, while the executable specifies to not built as position-independent-code, so a diagnostic is issued.
+
+The lib1 and lib2 requirements are not “compatible”. One of them requires that consumers are built as position-independent-code, while the other requires that consumers are not built as position-independent-code. Because exe2 links to both and they are in conflict, a diagnostic is issued.
+
+To be “compatible”, the `POSITION_INDEPENDENT_CODE` property, if set must be either the same, in a boolean sense, as the `INTERFACE_POSITION_INDEPENDENT_CODE` property of all transitively specified dependencies on which that property is set.
+
+This property of “compatible interface requirement” may be extended to other properties by specifying the property in the content of the `COMPATIBLE_INTERFACE_BOOL` target property. Each specified property must be compatible between the consuming target and the corresponding property with an `INTERFACE_ prefix` from each dependency:
+
+    add_library(lib1Version2 SHARED lib1_v2.cpp)
+    set_property(TARGET lib1Version2 PROPERTY INTERFACE_CUSTOM_PROP ON)
+    set_property(TARGET lib1Version2 APPEND PROPERTY
+      COMPATIBLE_INTERFACE_BOOL CUSTOM_PROP
+    )
+
+    add_library(lib1Version3 SHARED lib1_v3.cpp)
+    set_property(TARGET lib1Version3 PROPERTY INTERFACE_CUSTOM_PROP OFF)
+
+    add_executable(exe1 exe1.cpp)
+    target_link_libraries(exe1 lib1Version2) # CUSTOM_PROP will be ON
+
+    add_executable(exe2 exe2.cpp)
+    target_link_libraries(exe2 lib1Version2 lib1Version3) # Diagnostic
+
+Non-boolean properties may also participate in “compatible interface” computations. Properties specified in the `COMPATIBLE_INTERFACE_STRING` property must be either unspecified or compare to the same string among all transitively specified dependencies. This can be useful to ensure that multiple incompatible versions of a library are not linked together through transitive requirements of a target:
+
+    add_library(lib1Version2 SHARED lib1_v2.cpp)
+    set_property(TARGET lib1Version2 PROPERTY INTERFACE_LIB_VERSION 2)
+    set_property(TARGET lib1Version2 APPEND PROPERTY
+      COMPATIBLE_INTERFACE_STRING LIB_VERSION
+    )
+
+    add_library(lib1Version3 SHARED lib1_v3.cpp)
+    set_property(TARGET lib1Version3 PROPERTY INTERFACE_LIB_VERSION 3)
+
+    add_executable(exe1 exe1.cpp)
+    target_link_libraries(exe1 lib1Version2) # LIB_VERSION will be "2"
+
+    add_executable(exe2 exe2.cpp)
+    target_link_libraries(exe2 lib1Version2 lib1Version3) # Diagnostic
+
+The `COMPATIBLE_INTERFACE_NUMBER_MAX` target property specifies that content will be evaluated numerically and the maximum number among all specified will be calculated:
+
+    add_library(lib1Version2 SHARED lib1_v2.cpp)
+    set_property(TARGET lib1Version2 PROPERTY INTERFACE_CONTAINER_SIZE_REQUIRED 200)
+    set_property(TARGET lib1Version2 APPEND PROPERTY
+      COMPATIBLE_INTERFACE_NUMBER_MAX CONTAINER_SIZE_REQUIRED
+    )
+
+    add_library(lib1Version3 SHARED lib1_v3.cpp)
+    set_property(TARGET lib1Version3 PROPERTY INTERFACE_CONTAINER_SIZE_REQUIRED 1000)
+
+    add_executable(exe1 exe1.cpp)
+    # CONTAINER_SIZE_REQUIRED will be "200"
+    target_link_libraries(exe1 lib1Version2)
+
+    add_executable(exe2 exe2.cpp)
+    # CONTAINER_SIZE_REQUIRED will be "1000"
+    target_link_libraries(exe2 lib1Version2 lib1Version3)
+
+Similarly, the `COMPATIBLE_INTERFACE_NUMBER_MIN` may be used to calculate the numeric minimum value for a property from dependencies.
+
+Each calculated “compatible” property value may be read in the consumer at generate-time using generator expressions.
+
+Note that for each dependee, the set of properties specified in each compatible interface property must not intersect with the set specified in any of the other properties.
+
+#### Property Origin Debugging
