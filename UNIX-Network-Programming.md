@@ -769,17 +769,45 @@ All clients and servers begin with a call to `socket`, returning a socket descri
 
 **Most TCP servers are concurrent**, with the server calling `fork` for every client connection that it handles. We will see that most **UDP servers are iterative**. While these two models have been used successfully for many years, in ***Chapter 30*** we will look at other server design options that use threads and processes.
 
-### Chapter 5. TCP Client/Server Example
+## Chapter 5. TCP Client/Server Example
 
+### 5.1 Introduction
 
+We will now use the elementary functions from the previous chapter to write a complete TCP client/server example. Our simple example is an echo server that performs the following steps:
 
+1. The client reads a line of text from its standard input and writes the line to the server.
 
+2. The server reads the line from its network input and echoes the line back to the client.
 
+3. The client reads the echoed line and prints it on its standard output
 
+### 5.2 TCP Echo Server: main Function
 
+#### Create socket, bind server's well-known port
 
+#### Wait for client connection to complete
 
+#### Concurrent server
 
+### 5.3 TCP Echo Server: `str_echo` Function
+
+#### Read a buffer and echo the buffer
+
+### 5.4 TCP Echo Client: main Function
+
+#### Create socket, fill in Internet socket address structure
+
+#### Connect to server
+
+### 5.5 TCP Echo Client: `str_cli` Function
+
+#### Read a line, write to server
+
+#### Read echoed line from server, write to standard output
+
+#### Return to `main`
+
+### 5.6 Normal Startup
 
 
 
