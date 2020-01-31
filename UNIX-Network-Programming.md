@@ -809,6 +809,70 @@ We will now use the elementary functions from the previous chapter to write a co
 
 ### 5.6 Normal Startup
 
+Although our TCP example is small (about 150 lines of code for the two main functions, str_echo, str_cli, readline, and writen), it is essential that we understand how the client and server start, how they end, and most importantly, what happens when something goes wrong: the **client host crashes**, the **client process crashes**, **network connectivity is lost**, and so on. Only by understanding these **boundary conditions**, and their interaction with the TCP/IP protocols, can we write robust clients and servers that can handle these conditions.
+
+When the three-way handshake completes, we purposely list the client step first, and then the server steps. The reason can be seen in ***Figure 2.5***: **`connect` returns when the second segment of the handshake is received by the client**, but **`accept` does not return until the third segment of the handshake is received by the server**, one-half of the RTT after `connect` returns.
+
+### 5.7 Normal Termination
+
+We can follow through the steps involved in the normal termination of our client and server:
+
+1. When we type our `EOF` character, `fgets` returns a null pointer and the function `str_cli` (***Figure 5.5***) returns.
+
+2. When `str_cli` returns to the client `main` function (***Figure 5.4***), the latter terminates by calling `exit`.
+
+3. Part of process termination is the closing of all open descriptors, so the client socket is **closed by the kernel**. This **sends a `FIN` to the server**, to which the **server TCP responds with an `ACK`**. This is the first half of the TCP connection termination sequence. At this point, the server socket is in the `CLOSE_WAIT` state and the client socket is in the `FIN_WAIT_2` state (***Figures 2.4*** and ***2.5***).
+
+4. When the **server TCP receives the `FIN`**, the server child is blocked in a call to `readline` (***Figure 5.3***), and **`readline` then returns `0`**. This causes the `str_echo` function to return to the server child `main`.
+
+5. The server child terminates by calling `exit` (***Figure 5.2***).
+
+6. All open descriptors in the server child are closed. The closing of the connected socket by the child causes the final two segments of the TCP connection termination to take place: a **`FIN` from the server to the client**, and an **`ACK` from the client** (***Figure 2.5***). At this point, the **connection is completely terminated**. The client socket enters the `TIME_WAIT` state.
+
+7. Finally, the `SIGCHLD` signal is sent to the parent when the server child terminates. This occurs in this example, but we do not catch the signal in our code, and the default action of the signal is to be ignored. Thus, the child enters the zombie state. We can verify this with the ps command.
+
+### 5.8 POSIX Signal Handling
+
+A signal is a notification to a process that an event has occurred. Signals are sometimes called **software interrupts**. Signals usually occur **asynchronously**. By this we mean that a process doesn't know ahead of time exactly when a signal will occur.
+
+Signals can be sent
+
+* By one process to another process (or to itself)
+
+* By the kernel to a process
+
+The `SIGCHLD` signal that we described at the end of the previous section is one that is **sent by the kernel** whenever a **process terminates**, to the parent of the terminating process.
+
+Every signal has a **disposition**, which is also called the **action associated with the signal**. We set the disposition of a signal by calling the `sigaction` function (described shortly) and we have three choices for the disposition:
+
+1. We can provide a function that is called whenever a specific signal occurs. This function is called a **signal handler** and this action is called **catching a signal**. The two signals **`SIGKILL` and `SIGSTOP` cannot be caught**. Our function is called with a single integer argument that is the signal number and the function returns nothing. Its function prototype is therefore
+
+    `void handler (int signo);`
+
+    For most signals, calling sigaction and specifying a function to be called when the signal occurs is all that is required to catch a signal. But we will see later that a few signals, `SIGIO`, `SIGPOLL`, and `SIGURG`, all **require additional actions** on the part of the process to catch the signal.
+
+2. We can **ignore a signal** by setting its disposition to `SIG_IGN`. The two signals **`SIGKILL` and `SIGSTOP` cannot be ignored**.
+
+3. We can set the **default disposition** for a signal by setting its disposition to `SIG_DFL`. The default is normally to terminate a process on receipt of a signal, with certain signals also generating a core image of the process in its current working directory. There are a few signals whose default disposition is **to be ignored**: `SIGCHLD` and `SIGURG` (sent on the arrival of out-of-band data, **Chapter 24**) are two that we will encounter in this text.
+
+### POSIX Signal Semantics
+
+We summarize the following points about signal handling on a POSIX-compliant system:
+
+* Once a signal handler is installed, it **remains installed**. (Older systems removed the signal handler each time it was executed.)
+
+* While a signal handler is executing, the signal being delivered is **blocked**. Furthermore, any additional signals that were specified in the `sa_mask` signal set passed to `sigaction` when the handler was installed are **also blocked**. In ***Figure 5.6***, we set `sa_mask` to the empty set, meaning no additional signals are blocked other than the signal being caught.
+
+* If a signal is generated one or more times while it is blocked, it is normally **delivered only one time** after the signal is unblocked. That is, by default, Unix **signals are not queued**. We will see an example of this in the next section. The POSIX real-time standard, `1003.1b`, defines some reliable signals that are queued, but we do not use them in this text.
+
+* It is possible to selectively block and unblock a set of signals using the `sigprocmask` function. This lets us **protect a critical region** of code by preventing certain signals from being caught while that region of code is executing.
+
+### 5.9 Handling SIGCHLD Signals
+
+
+
+
+
 
 
 
