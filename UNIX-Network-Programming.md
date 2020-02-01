@@ -907,6 +907,114 @@ The purpose of this section has been to demonstrate three scenarios that we can 
 
 ### 5.11 Connection Abort before accept Returns
 
+There is another condition similar to the interrupted system call example in the previous section that can cause `accept` to return a **nonfatal error**, in which case we should just **call `accept` again**. The sequence of packets shown in ***Figure 5.13*** has been seen on **busy servers** (typically busy Web servers).
+
+Here, the three-way handshake completes, the connection is established, and then the client TCP sends an `RST` (reset). On the server side, the **connection is queued** by its TCP, **waiting for the server process to call `accept`** when the **`RST` arrives**. Sometime later, the server process calls `accept`.
+
+Unfortunately, what happens to the aborted connection is **implementation-dependent**. **Berkeley-derived implementations** handle the aborted connection completely within the kernel, and the server process never sees it. Most **SVR4 implementations**, however, return an error to the process as the return from `accept`, and the **error depends on the implementation**. These SVR4 implementations return an errno of `EPROTO` ("protocol error"), but **POSIX specifies** that the return must be `ECONNABORTED` ("software caused connection abort") instead. The reason for the POSIX change is that `EPROTO` is also returned when some fatal protocol-related events occur on the streams subsystem. Returning the same error for the nonfatal abort of an established connection by the client makes it impossible for the server to know whether to call `accept` again or not. In the case of the `ECONNABORTED` error, the server can **ignore the error** and just **call accept again**.
+
+### 5.12 Termination of Server Process
+
+We will now start our client/server and then kill the server child process. This simulates the crashing of the server process, so we can see what happens to the client. (We must be careful to **distinguish between** the **crashing of the server process**, which we are about to describe, and the **crashing of the server host**, which we will describe in ***Section 5.14***.) The following steps take place:
+
+1. We start the server and client and type one line to the client to verify that all is okay. That line is echoed normally by the server child.
+
+2. We find the process ID of the server child and kill it. As part of process termination, all open descriptors in the child are closed. This causes a **`FIN` to be sent to the client**, and the **client TCP responds with an `ACK`**. This is the **first half** of the TCP connection termination.
+
+3. The `SIGCHLD` signal is sent to the server parent and handled correctly (***Figure 5.12***).
+
+4. Nothing happens at the client. The client TCP receives the `FIN` from the server TCP and responds with an `ACK`, but the problem is that the **client process is blocked** in the call to `fgets` waiting for a line from the terminal.
+
+5. Running netstat at this point shows the state of the sockets.
+
+        linux % netstat -a | grep 9877
+        tcp        0      0 *:9877               *:*                 LISTEN
+        tcp        0      0 localhost:9877       localhost:43604     FIN_WAIT2
+        tcp        1      0 localhost:43604      localhost:9877      CLOSE_WAIT
+
+6. We can still type a line of input to the client.
+
+    This is allowed by TCP because the receipt of the `FIN` by the client TCP only indicates that the server process has closed **its end of** the connection and **will not be sending any more data**. The receipt of the `FIN` does not tell the client TCP that the server process has terminated (which in this case, it has). We will cover this again in ***Section 6.6*** when we talk about **TCP's half-close**.
+
+    When the server TCP receives the data from the client, it **responds with an `RST`** since the process that had that socket open has terminated. We can verify that the `RST` was sent by watching the packets with `tcpdump`.
+
+7. The client process will not see the `RST` because it calls `readline` immediately after the call to writen and `readline` returns `0` (`EOF`) immediately because of the `FIN` that was received in Step `2`. Our client is not expecting to receive an `EOF` at this point (***Figure 5.5***) so it quits with the error message "server terminated prematurely."
+
+8. When the client terminates (by calling `err_quit` in ***Figure 5.5***), all its open descriptors are closed.
+
+    What we have described also **depends on the timing** of the example. The client's call to `readline` may happen **before** the server's **`RST` is received** by the client, or it may happen **after**. If the `readline` happens before the `RST` is received, as we've shown in our example, the result is an **unexpected `EOF`** in the client. But if the `RST` arrives first, the result is an **`ECONNRESET` ("Connection reset by peer") error** return from `readline`.
+
+### 5.13 SIGPIPE Signal
+
+What happens if the client ignores the error return from `readline` and writes more data to the server? This can happen, for example, if the client needs to perform two writes to the server before reading anything back, with the first write eliciting the `RST`.
+
+The rule that applies is: When a process **writes to a socket that has received an `RST`**, the `SIGPIPE` signal is sent to the process. The default action of this signal is to terminate the process, so the process must catch the signal to avoid being involuntarily terminated.
+
+If the process either catches the signal and returns from the signal handler, or ignores the signal, the **`write` operation returns `EPIPE`**.
+
+A frequently asked question (FAQ) on Usenet is how to obtain this signal on the first write, and not the second. This is not possible. Following our discussion above, the first write elicits the `RST` and the second write elicits the signal. **It is okay to write to a socket that has received a `FIN`, but it is an error to write to a socket that has received an `RST`**.
+
+The recommended way to handle `SIGPIPE` depends on what the application wants to do when this occurs. If there is nothing special to do, then setting the signal disposition to `SIG_IGN` is easy, assuming that subsequent output operations will catch the error of `EPIPE` and terminate. If special actions are needed when the signal occurs (writing to a log file perhaps), then the signal should be caught and any desired actions can be performed in the signal handler. Be aware, however, that **if multiple sockets are in use, the delivery of the signal will not tell us which socket encountered the error**. If we need to know which write caused the error, then we must either ignore the signal or return from the signal handler and handle `EPIPE` from the `write`.
+
+### 5.14 Crashing of Server Host
+
+This scenario will test to see what happens when the **server host crashes**. To simulate this, we must run the client and server on different hosts. We then start the server, start the client, type in a line to the client to verify that the connection is up, **disconnect the server host** from the network, and type in another line at the client. This also covers the scenario of the **server host being unreachable** when the client sends data (i.e., some intermediate router goes down after the connection has been established).
+
+5.14 Crashing of Server Host
+This scenario will test to see what happens when the server host crashes. To simulate this, we must run the client and server on different hosts. We then start the server, start the client, type in a line to the client to verify that the connection is up, disconnect the server host from the network, and type in another line at the client. This also covers the scenario of the server host being unreachable when the client sends data (i.e., some intermediate router goes down after the connection has been established).
+
+The following steps take place:
+
+1. When the server host crashes, nothing is sent out on the existing network connections. That is, we are assuming the **host crashes** and is **not shut down** by an operator (which we will cover in **Section 5.16**).
+
+2. We type a line of input to the client, it is written by writen (**Figure 5.5**), and is sent by the client TCP as a data segment. The client then blocks in the call to `readline`, waiting for the echoed reply.
+
+3. If we watch the network with `tcpdump`, we will see the client TCP **continually retransmitting** the data segment, **trying to receive an `ACK`** from the server. ***Section 25.11*** of TCPv2 shows a typical pattern for TCP retransmissions: Berkeley-derived implementations retransmit the data segment 12 times, waiting for around 9 minutes before giving up. When the client TCP finally gives up (assuming the server host has not been rebooted during this time, or if the server host has not crashed but was unreachable on the network, assuming the host was still unreachable), **an error is returned to the client process**. Since the client is blocked in the call to **`readline`, it returns an error**. Assuming the server host crashed and there were no responses at all to the client's data segments, the error is `ETIMEDOUT`. But if some intermediate router determined that the server host was unreachable and responded with an `ICMP` "destination unreachable' message, the error is either `EHOSTUNREACH` or `ENETUNREACH`.
+
+Although our client discovers (eventually) that the peer is down or unreachable, there are times when we want to detect this quicker than having to wait nine minutes. The solution is to place a `timeout` on the call to `readline`, which we will discuss in ***Section 14.2***.
+
+The scenario that we just discussed detects that the server host has crashed only when we send data to that host. If we want to **detect the crashing of the server host even if we are not actively sending it data**, another technique is required. We will discuss the `SO_KEEPALIVE` socket option in ***Section 7.5***.
+ 
+### 5.15 Crashing and Rebooting of Server Host
+
+In this scenario, we will establish a connection between the client and server and then assume the server host crashes and reboots. In the previous section, the server host was still down when we sent it data. Here, we will let the server host reboot before sending it data. The easiest way to simulate this is to **establish the connection**, **disconnect the server** from the network, **shut down the server host** and then **reboot** it, and then **reconnect the server host** to the network. We **do not want the client to see the server host shut down** (which we will cover in ***Section 5.16***).
+
+As stated in the previous section, if the client is not actively sending data to the server when the server host crashes, the **client is not aware that the server host has crashed**. (This **assumes we are not using the `SO_KEEPALIVE` socket option**.) The following steps take place:
+
+1. We start the server and then the client. We type a line to verify that the connection is established.
+
+2. The server host crashes and reboots.
+
+3. We type a line of input to the client, which is sent as a TCP data segment to the server host.
+
+4. When the server host reboots after crashing, its TCP **loses all information about connections** that existed before the crash. Therefore, the server TCP responds to the received data segment from the client with an `RST`.
+
+5. Our client is blocked in the call to `readline` when the `RST` is received, causing `readline` to return the error `ECONNRESET`.
+
+If it is important for our client to detect the crashing of the server host, even if the client is not actively sending data, then some other technique (such as the `SO_KEEPALIVE` socket option or some client/server **heartbeat** function) is required.
+
+### 5.16 Shutdown of Server Host
+
+The previous two sections discussed the crashing of the server host, or the server host being unreachable across the network. We now consider what happens if the server host is shut down by an operator while our server process is running on that host.
+
+When a Unix system is shut down, the `init` process normally **sends the `SIGTERM` signal** to all processes (we can catch this signal), waits some fixed amount of time (often between `5` and `20` seconds), and then **sends the `SIGKILL` signal** (which we cannot catch) to any processes still running. This gives all running processes a short amount of time to clean up and terminate. If we do not catch `SIGTERM` and terminate, our server will be terminated by the `SIGKILL` signal. When the **process terminates**, all open descriptors are closed, and we then follow the same sequence of steps discussed in ***Section 5.12***. As stated there, we must use the `select` or `poll` function in our client to have the client **detect the termination of the server process as soon as it occurs**.
+
+### 5.17 Summary of TCP Example
+
+### 5.18 Data Format
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
