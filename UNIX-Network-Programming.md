@@ -869,10 +869,43 @@ We summarize the following points about signal handling on a POSIX-compliant sys
 
 ### 5.9 Handling SIGCHLD Signals
 
+The purpose of the zombie state is to maintain **information about the child** for the parent to fetch at some later time. This information includes the **process ID** of the child, its **termination status**, and information on the **resource utilization** of the child (CPU time, memory, etc.). If a process terminates, and that process has children in the zombie state, the **parent process ID of all the zombie children is set to 1** (the init process), which will **inherit the children and clean them up** (i.e., init will wait for them, which removes the zombie). Some Unix systems show the COMMAND column for a zombie process as `<defunct>`.
 
+#### Handling Zombies
 
+Obviously we do not want to leave zombies around. They **take up space in the kernel** and eventually we can **run out of processes**. Whenever we fork children, we must wait for them to prevent them from becoming zombies. To do this, we establish a signal handler to catch `SIGCHLD`, and within the handler, we call `wait`. (We will describe the `wait` and `waitpid` functions in ***Section 5.10***.) We establish the signal handler by adding the function call
 
+    Signal (SIGCHLD, sig_chld);
 
+The purpose of this example is to show that when writing network programs that catch signals, we must be cognizant of **interrupted system calls**, and we must handle them. In this specific example, running under `Solaris 9`, the `signal` function provided in the standard C library does not cause an interrupted system call to be automatically restarted by the kernel. That is, the `SA_RESTART` flag that we set in ***Figure 5.6*** is not set by the `signal` function in the system library. Some other systems automatically restart the interrupted system call. If we run the same example under 4.4BSD, using its library version of the `signal` function, the kernel restarts the interrupted system call and accept does not return an error. To handle this potential problem between different operating systems is one reason we define our own version of the signal function that we use throughout the text (***Figure 5.6***).
+
+#### Handling Interrupted System Calls
+
+We used the term "**slow system call**" to describe `accept`, and we use this term for any system call that **can block forever**. That is, the system call need never return. Most networking functions fall into this category. For example, there is no guarantee that a server's call to `accept` will ever return, if there are no clients that will connect to the server. Similarly, our server's call to `read` in ***Figure 5.3*** will never return if the client never sends a line for the server to echo. Other examples of slow system calls are reads and writes of pipes and terminal devices. A notable exception is disk I/O, which usually returns to the caller (assuming no catastrophic hardware failure).
+
+The basic rule that applies here is that **when a process is blocked in a slow system call and the process catches a signal and the signal handler returns, the system call can return an error of EINTR**. Some kernels automatically restart some interrupted system calls. For portability, when we write a program that catches signals (most concurrent servers catch `SIGCHLD`), we must be prepared for slow system calls to return `EINTR`. Portability problems are caused by the qualifiers "can" and "some," which were used earlier, and the fact that support for the POSIX `SA_RESTART` flag is optional. **Even if an implementation supports the `SA_RESTART` flag, not all interrupted system calls may automatically be restarted**. Most Berkeley-derived implementations, for example, never automatically restart select, and some of these implementations never restart `accept` or `recvfrom`.
+
+What we are doing in this piece of code is restarting the interrupted system call. This is fine for `accept`, along with functions such as `read`, `write`, `select`, and `open`. But there is one function that we cannot restart: `connect`. If this function returns `EINTR`, we cannot call it again, as doing so will return an immediate error. **When `connect` is interrupted by a caught signal and is not automatically restarted, we must call `select` to wait for the connection to complete**, as we will describe in ***Section 16.3***.
+
+### 5.10 wait and waitpid Functions
+
+If there are no terminated children for the process calling `wait`, but the process has one or more children that are still executing, then **`wait` blocks until the first of the existing children terminates**.
+
+`waitpid` gives us more control over which process to wait for and whether or not to block. First, the `pid` argument lets us specify the process ID that we want to wait for. A value of `-1` says to wait for the first of our children to terminate. (There are other options, dealing with process group IDs, but we do not need them in this text.) The options argument lets us specify additional options. The most common option is `WNOHANG`. This option tells the kernel **not to block if there are no terminated children**.
+
+Establishing a signal handler and calling `wait` from that handler are **insufficient for preventing zombies**. The problem is that all five signals are generated before the signal handler is executed, and the signal handler is executed only one time because **Unix signals are normally not queued**. Furthermore, this problem is nondeterministic.
+
+The correct solution is to call `waitpid` instead of `wait`. ***Figure 5.11*** shows the version of our `sig_chld` function that handles `SIGCHLD` correctly. This version works because we call `waitpid` within a loop, fetching the status of any of our children that have terminated. We must specify the `WNOHANG` option: This tells `waitpid` not to block if there are running children that have not yet terminated. In ***Figure 5.7***, we cannot call wait in a loop, because there is no way to prevent `wait` from blocking if there are running children that have not yet terminated.
+
+The purpose of this section has been to demonstrate three scenarios that we can encounter with network programming:
+
+1. We must catch the `SIGCHLD` signal when forking child processes.
+
+2. We must handle interrupted system calls when we catch signals.
+
+3. A `SIGCHLD` handler must be coded correctly using `waitpid` to prevent any zombies from being left around.
+
+### 5.11 Connection Abort before accept Returns
 
 
 
