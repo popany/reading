@@ -59,6 +59,10 @@ This problem is symptomatic of the isolation issue in unit testing: programs tha
 
 [Intro to Mocking with Moq](https://spin.atomicobject.com/2017/08/07/intro-mocking-moq/)
 
+[Mock a method for test](https://stackoverflow.com/questions/36345282/mock-a-method-for-test)
+
+[Any alternative for Microsoft Fakes in .NET Core](https://stackoverflow.com/questions/52497439/any-alternative-for-microsoft-fakes-in-net-core)
+
 ## Other resources
 
 [Developer Testing - Why should developers write tests?](http://www.bradoncode.com/blog/2015/05/10/developer-testing/)
@@ -66,3 +70,7 @@ This problem is symptomatic of the isolation issue in unit testing: programs tha
 [Mocks Aren't Stubs](https://martinfowler.com/articles/mocksArentStubs.html)
 
 [Mock framework vs MS Fakes frameworks](https://stackoverflow.com/questions/9677445/mock-framework-vs-ms-fakes-frameworks)
+
+[Should I test private methods or only public ones?](https://stackoverflow.com/questions/105007/should-i-test-private-methods-or-only-public-ones)
+
+[Best way to unit test methods that call other methods inside same class](https://softwareengineering.stackexchange.com/questions/188609/best-way-to-unit-test-methods-that-call-other-methods-inside-same-class)
