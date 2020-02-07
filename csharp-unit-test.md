@@ -51,9 +51,13 @@ This problem is symptomatic of the isolation issue in unit testing: programs tha
 
 [moq](https://github.com/moq/moq4)
 
+[moq Quickstart](https://github.com/Moq/moq4/wiki/Quickstart)
+
 [How to mock ConfigurationManager.AppSettings with moq](https://stackoverflow.com/questions/9486087/how-to-mock-configurationmanager-appsettings-with-moq)
 
 [A Guide to Moq for Rhino.Mocks Users](https://www.wrightfully.com/guide-to-moq-for-rhino-mocks-users)
+
+[Intro to Mocking with Moq](https://spin.atomicobject.com/2017/08/07/intro-mocking-moq/)
 
 ## Other resources
 
