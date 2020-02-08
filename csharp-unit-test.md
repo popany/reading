@@ -65,6 +65,8 @@ This problem is symptomatic of the isolation issue in unit testing: programs tha
 
 [Pose document](https://www.nuget.org/packages/Pose)
 
+[Pose - github](https://github.com/tonerdo/pose)
+
 ## Other resources
 
 [Developer Testing - Why should developers write tests?](http://www.bradoncode.com/blog/2015/05/10/developer-testing/)
