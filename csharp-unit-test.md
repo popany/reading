@@ -63,6 +63,8 @@ This problem is symptomatic of the isolation issue in unit testing: programs tha
 
 [Any alternative for Microsoft Fakes in .NET Core](https://stackoverflow.com/questions/52497439/any-alternative-for-microsoft-fakes-in-net-core)
 
+[Pose document](https://www.nuget.org/packages/Pose)
+
 ## Other resources
 
 [Developer Testing - Why should developers write tests?](http://www.bradoncode.com/blog/2015/05/10/developer-testing/)
