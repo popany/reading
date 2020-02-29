@@ -78,3 +78,5 @@ This problem is symptomatic of the isolation issue in unit testing: programs tha
 [Should I test private methods or only public ones?](https://stackoverflow.com/questions/105007/should-i-test-private-methods-or-only-public-ones)
 
 [Best way to unit test methods that call other methods inside same class](https://softwareengineering.stackexchange.com/questions/188609/best-way-to-unit-test-methods-that-call-other-methods-inside-same-class)
+
+[What would be an alternate to \[TearDown\] and \[SetUp\] in MSTest?](https://stackoverflow.com/questions/6193744/what-would-be-an-alternate-to-teardown-and-setup-in-mstest)
